@@ -1,0 +1,22 @@
+
+[package]
+name = "pinned-scope"
+version = "0.1.0"
+authors = ["Mikołaj Gutsche <mikolajgutsche@gmail.com>"]
+description = "Lightweight async scope based on structural concurrency and limited sharing"
+edition = "2024"
+keywords = ["scope", "tokio", "futures"]
+license = "MIT"
+readme = "README.md"
+
+[features]
+tokio-spawner = ["tokio"]
+unstable-async-drop = []
+default = [ "tokio-spawner"]
+
+[dependencies]
+futures = {version = "0.3", features = ["async-await"]}
+tokio = { version = "1", features = ["rt"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time", "rt-multi-thread", "macros"] }
