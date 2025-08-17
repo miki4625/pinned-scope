@@ -1,7 +1,7 @@
 
 [package]
 name = "pinned-scope"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Mikołaj Gutsche <mikolajgutsche@gmail.com>"]
 description = "Lightweight async scope based on structural concurrency and limited sharing"
 edition = "2024"

@@ -236,27 +236,27 @@ impl Spawnable for Enter {}
 impl<'a, F: Future> Spawnable for F {}
 
 #[derive(Clone)]
-pub struct Guard<'a> {
-    completeness_holder: &'a CompletenessHolder,
+pub struct Guard {
+    completeness_holder: &'static CompletenessHolder,
 }
 
-impl<'a> Guard<'a> {
-    fn new(completeness_holder: &'a CompletenessHolder) -> Self {
+impl Guard {
+    fn new(completeness_holder: &'static CompletenessHolder) -> Self {
         Self {
             completeness_holder
         }
     }
 }
 
-pub struct Scope<'a, Env, Spawner: TaskSpawner> {
+pub struct Scope<Env, Spawner: TaskSpawner> {
     env: Env,
-    guard: Guard<'a>,
+    guard: Guard,
     _spawner: PhantomData<Spawner>,
     _phantom_pinned: PhantomPinned,
 }
 
-impl<'a, Env, Spawner: TaskSpawner> Scope<'a, Env, Spawner> {
-    fn new(env: Env, guard: Guard<'a>) -> Self {
+impl<Env, Spawner: TaskSpawner> Scope<Env, Spawner> {
+    fn new(env: Env, guard: Guard) -> Self {
         Self {
             env,
             guard,
@@ -267,35 +267,52 @@ impl<'a, Env, Spawner: TaskSpawner> Scope<'a, Env, Spawner> {
 }
 
 pub struct Enter;
-pub struct Finish<R> {
-    result: R
+
+struct Valid;
+
+trait Sealed {}
+#[allow(private_bounds)]
+pub trait FinishState: Sealed {}
+
+impl Sealed for Valid {}
+
+impl FinishState for Valid {}
+
+
+trait ValidFinish {}
+
+impl<R, S: FinishState> ValidFinish for Finish<R, S> {}
+
+pub struct Finish<R, S: FinishState> {
+    result: R,
+    phantom_pinned: PhantomData<S>,
 }
 
-impl<R> Finish<R> {
+impl<R, S: FinishState> Finish<R, S> {
     fn new(result: R) -> Self {
-        Self { result }
+        Self { result, phantom_pinned: Default::default() }
     }
 }
 
-impl From<Enter> for Finish<()> {
+impl From<Enter> for Finish<(), Valid> {
     fn from(_: Enter) -> Self {
         Self::new(())
     }
 }
 
-impl<'a, Spawner: TaskSpawner> Scope<'a, Enter, Spawner> {
-    fn enter(guard: Guard<'a>) -> Self {
+impl<'a, Spawner: TaskSpawner> Scope<Enter, Spawner> {
+    fn enter(guard: Guard) -> Self {
         Self::new(Enter, guard)
     }
 
     #[allow(dead_code)]
-    fn finish<R>(self, value: R) -> Scope<'a, Finish<R>, Spawner> {
-        Scope::new(Finish::new(value), self.guard)
+    fn finish<R>(self, value: R) -> Finish<R, impl FinishState> {
+        Finish::<R, Valid>::new(value)
     }
 }
 
-impl<'a, Env: Spawnable + Future, Spawner: TaskSpawner> Scope<'a, Env, Spawner> {
-    pub fn with<R: Send + 'static, F: Future<Output=R> + Send>(self, future: F) -> Scope<'a, impl Future<Output=(Env::Output, R)>, Spawner>  {
+impl<Env: Spawnable + Future, Spawner: TaskSpawner> Scope<Env, Spawner> {
+    pub fn with<R: Send + 'static, F: Future<Output=R> + Send>(self, future: F) -> Scope<impl Future<Output=(Env::Output, R)>, Spawner>  {
         let guard_clone = self.guard.clone();
         let Self { env, guard, .. } = self;
         let task = Self::make_guarded_task(guard_clone, future);
@@ -304,8 +321,8 @@ impl<'a, Env: Spawnable + Future, Spawner: TaskSpawner> Scope<'a, Env, Spawner> 
     }
 }
 
-impl<'a, Env: Spawnable, Spawner: TaskSpawner> Scope<'a, Env, Spawner> {
-    pub fn spawn<R: Send + 'static, F: Future<Output=R> + Send>(self, future: F) -> Scope<'a, impl Future<Output=(Self, R)>, Spawner>  {
+impl<'a, Env: Spawnable, Spawner: TaskSpawner> Scope<Env, Spawner> {
+    pub fn spawn<R: Send + 'static, F: Future<Output=R> + Send>(self, future: F) -> Scope<impl Future<Output=(Self, R)>, Spawner>  {
         let (g1, g2) = (self.guard.clone(), self.guard.clone());
         let task = Self::make_guarded_task(g1, future);
         let handle = async move {
@@ -316,7 +333,7 @@ impl<'a, Env: Spawnable, Spawner: TaskSpawner> Scope<'a, Env, Spawner> {
         Scope::new(handle, g2)
     }
 
-    fn make_guarded_task<R: Send + 'static, F: Future<Output=R> + Send>(guard: Guard<'_>, future: F) -> impl Future<Output=R>  {
+    fn make_guarded_task<R: Send + 'static, F: Future<Output=R> + Send>(guard: Guard, future: F) -> impl Future<Output=R>  {
         let guard = guard.completeness_holder.make_guard();
         async move {
 
@@ -367,7 +384,7 @@ impl_variadic_joinable_future! { F0, 0 F1, 1 F2, 2 F3, 3 F4, 4 F5, 5  }
 impl_variadic_joinable_future! { F0, 0 F1, 1 F2, 2 F3, 3 F4, 4 F5, 5 F6, 6  }
 impl_variadic_joinable_future! { F0, 0 F1, 1 F2, 2 F3, 3 F4, 4 F5, 5 F6, 6 F7, 7  }*/
 
-impl<'a, Env, Spawner: TaskSpawner> Future for Scope<'a, Env, Spawner>
+impl<'a, Env, Spawner: TaskSpawner> Future for Scope<Env, Spawner>
     where Env: Future
 {
     type Output = Env::Output;
@@ -380,11 +397,25 @@ impl<'a, Env, Spawner: TaskSpawner> Future for Scope<'a, Env, Spawner>
     }
 }
 
-pub fn generic_scope<Spawner: TaskSpawner, R>(closure: impl for<'a> AsyncFnOnce(Scope<'a, Enter, Spawner>) -> Scope<'a, Finish<R>, Spawner> + 'static) -> impl Future<Output=R> {
+#[allow(private_bounds)]
+pub trait IntoInner: ValidFinish {
+    type Inner;
+    fn into_inner(self) -> Self::Inner;
+}
+
+impl<R, S: FinishState> IntoInner for Finish<R, S> {
+    type Inner = R;
+
+    fn into_inner(self) -> Self::Inner {
+        self.result
+    }
+}
+
+pub fn generic_scope<Spawner: TaskSpawner, R, AsyncFnRet: IntoInner<Inner=R> + 'static>(closure: impl AsyncFnOnce(Scope<Enter, Spawner>) -> AsyncFnRet + 'static) -> impl Future<Output=R> {
     let closure = async move |guard_ref| {
         let guard = Guard::new(guard_ref);
         let scope = Scope::enter(guard);
-        closure(scope).await.env.result
+        closure(scope).await.into_inner()
     };
 
     let ret = ScopedFuture {
@@ -398,13 +429,13 @@ pub fn generic_scope<Spawner: TaskSpawner, R>(closure: impl for<'a> AsyncFnOnce(
 
 #[cfg(feature="tokio-spawner")]
 pub mod tokio_spawner {
-    use crate::{generic_scope, Enter};
+    use crate::{generic_scope, Enter, IntoInner};
 
-    pub async fn scope<R>(closure: impl for<'a> AsyncFnOnce(Scope<'a, Enter, TokioSpawner>) -> Scope<'a, Finish<R>, TokioSpawner> + 'static) -> R {
-        generic_scope::<TokioSpawner, R>(closure).await
+    pub async fn scope<R, AsyncFnRet: IntoInner<Inner=R> + 'static>(closure: impl AsyncFnOnce(Scope<Enter, TokioSpawner>) -> AsyncFnRet + 'static) -> R  {
+        generic_scope::<TokioSpawner, R, AsyncFnRet>(closure).await
     }
 
-    use crate::{Finish, Scope, TaskSpawner};
+    use crate::{Scope, TaskSpawner};
 
     pub struct TokioSpawner;
 
@@ -430,14 +461,15 @@ pub mod tokio_spawner {
 
 #[cfg(test)]
 mod examples {
-    use crate::generic_scope;
+    use futures::FutureExt;
+    use crate::{generic_scope, Finish, FinishState, Valid};
     use crate::tokio_spawner::TokioSpawner;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn it_works() {
         let mut vec = vec![1, 2, 3];
 
-        let vec = generic_scope::<TokioSpawner, _>(async move |scope| {
+        let vec = generic_scope::<TokioSpawner, _, _>(async move |scope| {
             let (scope, result) = scope.spawn(async {
                 vec.push(0);
                 vec.len() as i32 + 1
