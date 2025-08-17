@@ -1,18 +1,18 @@
 # pinned-scope
 ****
 
-pinned-scope provides a mechanism analogue of `std::thread::scope` but for async - unfortunately, 1:1 mapping is not possible in todays rust. It's fully composable on nightly and partially on stable.
+pinned-scope provides an analogue mechanism of `std::thread::scope` but for async - unfortunately, 1:1 mapping is not possible in today's Rust. It's fully composable on nightly and partially on stable.
 
 ## Caveats
 - Sharing data with other tasks is **only** available for owned data by the scope
-- Not polling to completeness started future provided by scope can result in not desired behavior.  
-This could be result of using `futures::select!` macro or using `Box::pin`, polling once and then dropping pinned box.  
+- Not polling to completeness started future provided by scope can result in undesired behavior.  
+This could be the result of using the `futures::select!` macro or using `Box::pin`, polling once, and then dropping pinned box.  
 Actual behavior:
-    - On **stable**: destructor will block parent thread (and executor itself) until all **started** child tasks are completed
-    - On **nightly** with `unstable-async-drop` feature turned on: AsyncDrop will yield `Poll::Pending` until all started children tasks are completed
-    - Dropping not completed future returned by the scope will not drive it to completeness, therefore no more children tasks will be spawned
+    - On **stable**: destructor will block the parent thread (and executor itself) until all **started** child tasks are completed.
+    - On **nightly** with the `unstable-async-drop` feature turned on: AsyncDrop will yield `Poll::Pending` until all started child tasks are completed.
+    - Dropping not completed future returned by the scope will not drive it to completeness, therefore no more child tasks will be spawned.
 
-It's discouraged to use this crate without `AsyncDrop`
+It's discouraged to use this crate without `AsyncDrop`.
 
 ## Example
 
@@ -48,7 +48,7 @@ a.push(4);
 assert_eq!(x, a.len());
 ```
 
-But in this example we `await` on spawned task, therefore first and second spawn will always be invoked sequentially to fix this we can change second `spawn` to `with`:
+But in this example we `await` on spawned task, therefore the first and second spawns will always be invoked sequentially. To fix this we can change the second `spawn` to `with`:
 #### Fixed first example
 ```rust
 let (mut a, x) = pinned_scope::tokio_spawner::scope(async |s| { //async closure instead of normal one
@@ -118,7 +118,7 @@ let data = manage_data(data).await;
 
 ## Why this should be safe and sound
 
-Scopes in async are problematic, because it's hard to manage them in safe rust for two reasons:
+Scopes in async are problematic because it's hard to manage them in safe Rust for two reasons:
 1. Outside vicious code  
     1.1 Drop of partially completed main future  
     1.2 Leaking started main future
@@ -133,8 +133,8 @@ let pinned = pin!(returned_future);
 poll!(pinned);
 drop(pinned);
 ```
-Solution: Drop will block parent thread until all started children tasks are completed  
-*on nighly it's possible to use `AsyncDrop` to don't block executor
+Solution: Drop will block the parent thread until all started child tasks are completed.  
+*On nighly it's possible to use `AsyncDrop` to not block the executor.
 
 #### 1.2 e.g.
 ```rust
@@ -145,9 +145,9 @@ poll!(pinned);
 std::mem::forget(pinned);
 drop(borrowed_vec); // UB: spawned task can still have access to it
 ```
-Solution: Make scope `'static` and `!Unpin` 
-- `'static` - sharable data must be owned by scope
-- `!Unpin` - by `Pin` [drop guarantee](https://doc.rust-lang.org/std/pin/index.html#subtle-details-and-the-drop-guarantee) we know that memory of the scope will not be invalidated until Drop is called - it's safe to leak returned future even if was partially completed, because data borrowed by children tasks will always be valid
+Solution: Make scope `'static` and `!Unpin`: 
+- `'static` - shareable data must be owned by scope.
+- `!Unpin` - by `Pin` [drop guarantee](https://doc.rust-lang.org/std/pin/index.html#subtle-details-and-the-drop-guarantee) we know that the memory of the scope will not be invalidated until Drop is called - it's safe to leak the returned future even if it was partially completed, because data borrowed by children tasks will always be valid.
 
 #### 2.1 e.g.
 ```rust
@@ -158,7 +158,7 @@ scope(async |s| {
     drop(pinned);
 });
 ```
-Solution: Closure must return Scope with Finish guard which cannot be acquired if not all children tasks are not driven to completion - will not compile
+Solution: Closure must return Scope with Finish guard which, cannot be acquired if not all children tasks are not driven to completion - will not compile.
 
 
 #### 2.2 e.g.
@@ -172,4 +172,4 @@ scope(async |s| {
     drop(borrowed_vec); // UB: spawned task can still have access to it
 });
 ```
-Solution: Closure must return Scope with Finish guard which cannot be acquired if not all children tasks are not driven to completion - will not compile
+Solution: Closure must return Scope with Finish guard which, cannot be acquired if not all children tasks are not driven to completion - will not compile.
